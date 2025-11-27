@@ -186,18 +186,17 @@ def calculate_accuracy(loader, net, device):
             correct += (predicted == labels).sum().item()
     return 100 * correct / total
 
-def adjust_learning_rate(optimizer, epoch, initial_lr, warmup_epochs, milestones, gamma):
-    """Sets the learning rate for the given epoch with warmup and multi-step decay."""
+def adjust_learning_rate(optimizer, epoch, initial_lr, warmup_epochs, num_epochs):
+    """Sets the learning rate for the given epoch with warmup and cosine annealing decay."""
     if epoch < warmup_epochs:
         # Linear warmup
         lr = initial_lr * (epoch + 1) / warmup_epochs
     else:
-        # Multi-step decay
-        lr = initial_lr
-        for milestone in milestones:
-            if epoch >= milestone:
-                lr *= gamma
-    
+        # Cosine annealing decay after warmup
+        epoch_after_warmup = epoch - warmup_epochs
+        epochs_after_warmup = num_epochs - warmup_epochs
+        lr = initial_lr * 0.5 * (1. + np.cos(np.pi * epoch_after_warmup / epochs_after_warmup))
+
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
@@ -215,8 +214,6 @@ def main(output_dir):
 
     # LR Scheduler and Warmup settings
     WARMUP_EPOCHS = 5
-    LR_MILESTONES = [60, 120, 160]
-    LR_GAMMA = 0.2  # Divide by 5
 
     # Data transformation
     transform_train = transforms.Compose([
@@ -253,7 +250,7 @@ def main(output_dir):
     
     for epoch in range(NUM_EPOCHS):
         # Adjust learning rate for the current epoch
-        current_lr = adjust_learning_rate(optimizer, epoch, INITIAL_LR, WARMUP_EPOCHS, LR_MILESTONES, LR_GAMMA)
+        current_lr = adjust_learning_rate(optimizer, epoch, INITIAL_LR, WARMUP_EPOCHS, NUM_EPOCHS)
         
         net.train()
         running_loss = 0.0
