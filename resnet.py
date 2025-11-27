@@ -182,7 +182,7 @@ def calculate_accuracy(loader, net, device):
 # ======================================================================================
 def main():
     # Hyperparameters
-    NUM_EPOCHS = 10
+    NUM_EPOCHS = 200
     BATCH_SIZE = 128
     LEARNING_RATE = 0.01
 
