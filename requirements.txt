@@ -1,0 +1,13 @@
+certifi
+cffi
+cycler
+kiwisolver
+matplotlib
+numpy
+olefile
+Pillow
+pycparser
+pyparsing
+python-dateutil
+pytz
+six
