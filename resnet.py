@@ -181,20 +181,53 @@ def calculate_accuracy(loader, net, device):
             correct += (predicted == labels).sum().item()
     return 100 * correct / total
 
+def adjust_learning_rate(optimizer, epoch, initial_lr, warmup_epochs, milestones, gamma):
+    """Sets the learning rate for the given epoch with warmup and multi-step decay."""
+    if epoch < warmup_epochs:
+        # Linear warmup
+        lr = initial_lr * (epoch + 1) / warmup_epochs
+    else:
+        # Multi-step decay
+        lr = initial_lr
+        for milestone in milestones:
+            if epoch >= milestone:
+                lr *= gamma
+    
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    return lr
+
 # ======================================================================================
 # D. Main Workflow for Training and Evaluation
 # ======================================================================================
 def main(output_dir):
     # Hyperparameters
-    NUM_EPOCHS = 10
+    NUM_EPOCHS = 200
     BATCH_SIZE = 128
-    LEARNING_RATE = 0.01
+    INITIAL_LR = 0.1
+    MOMENTUM = 0.9
+    WEIGHT_DECAY = 5e-4
+
+    # LR Scheduler and Warmup settings
+    WARMUP_EPOCHS = 5
+    LR_MILESTONES = [60, 120, 160]
+    LR_GAMMA = 0.2  # Divide by 5
 
     # Data transformation
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
     classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     
@@ -206,13 +239,17 @@ def main(output_dir):
 
     # Define loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=5e-4)
+    optimizer = optim.SGD(net.parameters(), lr=INITIAL_LR, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
 
     # --- Training Loop ---
     print('Start Training')
     start_time = time.time()
     loss_history, train_accuracy_history, val_accuracy_history = [], [], []
+    
     for epoch in range(NUM_EPOCHS):
+        # Adjust learning rate for the current epoch
+        current_lr = adjust_learning_rate(optimizer, epoch, INITIAL_LR, WARMUP_EPOCHS, LR_MILESTONES, LR_GAMMA)
+        
         net.train()
         running_loss = 0.0
         for data in trainloader:
@@ -232,7 +269,8 @@ def main(output_dir):
         val_acc = calculate_accuracy(testloader, net, device)
         train_accuracy_history.append(train_acc)
         val_accuracy_history.append(val_acc)
-        print(f'Epoch {epoch + 1}/{NUM_EPOCHS} - Loss: {epoch_loss:.3f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%')
+        
+        print(f'Epoch {epoch + 1}/{NUM_EPOCHS} - LR: {current_lr:.5f} - Loss: {epoch_loss:.3f} - Train Acc: {train_acc:.2f}% - Val Acc: {val_acc:.2f}%')
 
     end_time = time.time()
     print('End Training')
