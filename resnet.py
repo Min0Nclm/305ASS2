@@ -5,6 +5,8 @@ import torchvision
 import torchvision.transforms as transforms
 import time
 import sys
+import os
+import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
@@ -114,7 +116,7 @@ def resnet50(num_classes=10):
 # ======================================================================================
 # C. Helper functions for reporting
 # ======================================================================================
-def plot_training_curves(loss_history, train_accuracy_history, val_accuracy_history):
+def plot_training_curves(loss_history, train_accuracy_history, val_accuracy_history, output_dir):
     print("Generating training curve plots...")
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
     ax1.plot(loss_history)
@@ -128,10 +130,11 @@ def plot_training_curves(loss_history, train_accuracy_history, val_accuracy_hist
     ax2.set_ylabel("Accuracy (%)")
     ax2.legend()
     plt.tight_layout()
-    plt.savefig("resnet_training_curves.png")
-    print("Saved 'resnet_training_curves.png'")
+    save_path = os.path.join(output_dir, "resnet_training_curves.png")
+    plt.savefig(save_path)
+    print(f"Saved training curves to {save_path}")
 
-def visualize_and_save_predictions(net, testloader, classes, device):
+def visualize_and_save_predictions(net, testloader, classes, device, output_dir):
     print("Generating prediction images for the report...")
     net.eval()
     well_classified_examples, misclassified_examples = [], []
@@ -148,11 +151,11 @@ def visualize_and_save_predictions(net, testloader, classes, device):
             if len(well_classified_examples) < 5: well_classified_examples.append(example)
         else:
             if len(misclassified_examples) < 5: misclassified_examples.append(example)
-    _plot_image_examples(well_classified_examples, "Well Classified Examples", "resnet_well_classified.png")
-    _plot_image_examples(misclassified_examples, "Misclassified Examples", "resnet_misclassified.png")
+    _plot_image_examples(well_classified_examples, "Well Classified Examples", "resnet_well_classified.png", output_dir)
+    _plot_image_examples(misclassified_examples, "Misclassified Examples", "resnet_misclassified.png", output_dir)
     print("Saved classification example images.")
 
-def _plot_image_examples(examples, title, filename):
+def _plot_image_examples(examples, title, filename, output_dir):
     if not examples: print(f"No examples found for '{title}'"); return
     fig, axes = plt.subplots(1, len(examples), figsize=(15, 3))
     if len(examples) == 1: axes = [axes]
@@ -164,7 +167,8 @@ def _plot_image_examples(examples, title, filename):
         ax.set_title(f"True: {example['true_label']}\nPred: {example['predicted_label']}\nConf: {example['confidence']:.2f}")
         ax.axis('off')
     plt.tight_layout()
-    plt.savefig(filename)
+    save_path = os.path.join(output_dir, filename)
+    plt.savefig(save_path)
 
 def calculate_accuracy(loader, net, device):
     correct = 0; total = 0
@@ -180,9 +184,9 @@ def calculate_accuracy(loader, net, device):
 # ======================================================================================
 # D. Main Workflow for Training and Evaluation
 # ======================================================================================
-def main():
+def main(output_dir):
     # Hyperparameters
-    NUM_EPOCHS = 200
+    NUM_EPOCHS = 10
     BATCH_SIZE = 128
     LEARNING_RATE = 0.01
 
@@ -253,13 +257,20 @@ def main():
         if class_total[i] > 0:
             print(f'Accuracy of {classes[i]:>5s} : {100 * class_correct[i] / class_total[i]:2.0f} %')
 
-    plot_training_curves(loss_history, train_accuracy_history, val_accuracy_history)
-    visualize_and_save_predictions(net, testloader, classes, device)
+    plot_training_curves(loss_history, train_accuracy_history, val_accuracy_history, output_dir)
+    visualize_and_save_predictions(net, testloader, classes, device, output_dir)
 
 if __name__ == '__main__':
+    # Create a directory for results
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_dir = os.path.join("results", timestamp)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Tee stdout to a log file
     original_stdout = sys.stdout
-    with open('resnet_report.txt', 'w') as f:
+    log_file_path = os.path.join(output_dir, 'resnet_report.txt')
+    with open(log_file_path, 'w') as f:
         sys.stdout = Tee(original_stdout, f)
-        main()
+        main(output_dir) # Pass the output directory to main
     sys.stdout = original_stdout
-    print("\nScript finished. All outputs saved to 'resnet_report.txt'.")
+    print(f"\nScript finished. All outputs saved to '{output_dir}'.")
