@@ -226,7 +226,7 @@ def main(output_dir):
         transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-        transforms.RandomErasing(),
+        transforms.RandomErasing(p=0.5),
     ])
     transform_test = transforms.Compose([
         transforms.ToTensor(),
