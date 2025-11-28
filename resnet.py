@@ -136,6 +136,28 @@ def mixup_data(x, y, alpha=1.0, device='cuda'):
 def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
+def rand_bbox(size, lam):
+    """
+    Generates a random bounding box for CutMix.
+    """
+    W = size[2]
+    H = size[1]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    # Uniformly sample the center of the box
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    # Calculate box coordinates, clamping to image boundaries
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
 # ======================================================================================
 # C. Helper functions for reporting
 # ======================================================================================
@@ -231,6 +253,7 @@ def main(output_dir):
     MOMENTUM = 0.9
     WEIGHT_DECAY = 5e-4
     MIXUP_ALPHA = 1.0
+    CUTMIX_ALPHA = 1.0
 
     # LR Scheduler and Warmup settings
     WARMUP_EPOCHS = 5
@@ -282,15 +305,27 @@ def main(output_dir):
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
 
-            # Apply Mixup
-            mixed_inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, MIXUP_ALPHA, device)
-            
+            # Randomly apply either Mixup or CutMix
+            if np.random.rand() < 0.5:
+                # Apply Mixup
+                mixed_inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, MIXUP_ALPHA, device)
+                outputs = net(mixed_inputs)
+                loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
+            else:
+                # Apply CutMix
+                lam = np.random.beta(CUTMIX_ALPHA, CUTMIX_ALPHA)
+                rand_index = torch.randperm(inputs.size()[0]).to(device)
+                labels_a = labels
+                labels_b = labels[rand_index]
+                bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
+                inputs[:, :, bby1:bby2, bbx1:bbx2] = inputs[rand_index, :, bby1:bby2, bbx1:bbx2]
+                # Adjust lambda to reflect the actual patch size
+                lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
+                
+                outputs = net(inputs)
+                loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
+
             optimizer.zero_grad()
-            outputs = net(mixed_inputs)
-            
-            # Calculate loss using mixup criterion
-            loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
-            
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
