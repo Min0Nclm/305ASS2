@@ -11,6 +11,10 @@ import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+from collections import Counter
+
 
 # ======================================================================================
 # A. Helper class for logging
@@ -178,6 +182,51 @@ def plot_training_curves(loss_history, train_accuracy_history, val_accuracy_hist
     save_path = os.path.join(output_dir, "resnet_training_curves.png")
     plt.savefig(save_path)
     print(f"Saved training curves to {save_path}")
+
+def generate_advanced_report(net, testloader, device, classes, output_dir, top_k=5):
+    print("\n--- Generating Advanced Report ---")
+    net.eval()
+    all_labels = []
+    all_predicted = []
+    misclassified = []
+
+    with torch.no_grad():
+        for data in testloader:
+            images, labels = data
+            images, labels = images.to(device), labels.to(device)
+            outputs = net(images)
+            _, predicted = torch.max(outputs.data, 1)
+            all_labels.extend(labels.cpu().numpy())
+            all_predicted.extend(predicted.cpu().numpy())
+            
+            # Identify misclassified samples
+            for i in range(len(labels)):
+                if predicted[i] != labels[i]:
+                    misclassified.append((classes[labels[i]], classes[predicted[i]]))
+
+    # 1. Confusion Matrix
+    print("Generating confusion matrix...")
+    cm = confusion_matrix(all_labels, all_predicted)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=classes, yticklabels=classes)
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.title('Confusion Matrix')
+    cm_save_path = os.path.join(output_dir, 'confusion_matrix.png')
+    plt.savefig(cm_save_path)
+    print(f"Saved confusion matrix to {cm_save_path}")
+
+    # 2. Top-K Error Classes
+    print(f"\n--- Top-{top_k} Misclassification Errors ---")
+    if misclassified:
+        error_counts = Counter(misclassified)
+        top_errors = error_counts.most_common(top_k)
+        for i, ((true_label, pred_label), count) in enumerate(top_errors):
+            print(f"{i+1}. True: '{true_label}', Predicted: '{pred_label}' - Occurrences: {count}")
+    else:
+        print("No misclassification errors found.")
+
+
 
 def visualize_and_save_predictions(net, testloader, classes, device, output_dir):
     print("Generating prediction images for the report...")
@@ -366,6 +415,8 @@ def main(output_dir):
 
     plot_training_curves(loss_history, train_accuracy_history, val_accuracy_history, output_dir)
     visualize_and_save_predictions(net, testloader, classes, device, output_dir)
+    generate_advanced_report(net, testloader, device, classes, output_dir)
+
 
 if __name__ == '__main__':
     # Create a directory for results
