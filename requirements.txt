@@ -11,3 +11,6 @@ pyparsing
 python-dateutil
 pytz
 six
+
+scikit-learn
+seaborn

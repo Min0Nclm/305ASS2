@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
+from torchvision.transforms import AutoAugmentPolicy
 import time
 import sys
 import os
@@ -10,6 +11,10 @@ import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+from collections import Counter
+
 
 # ======================================================================================
 # A. Helper class for logging
@@ -118,6 +123,45 @@ class ResNet(nn.Module):
 def resnet50(num_classes=10):
     return ResNet(Bottleneck, [3, 4, 6, 3], num_classes=num_classes)
 
+def mixup_data(x, y, alpha=1.0, device='cuda'):
+    '''Returns mixed inputs, pairs of targets, and lambda'''
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+
+    batch_size = x.size()[0]
+    index = torch.randperm(batch_size).to(device)
+
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+def rand_bbox(size, lam):
+    """
+    Generates a random bounding box for CutMix.
+    """
+    W = size[2]
+    H = size[1]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    # Uniformly sample the center of the box
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    # Calculate box coordinates, clamping to image boundaries
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
 # ======================================================================================
 # C. Helper functions for reporting
 # ======================================================================================
@@ -138,6 +182,51 @@ def plot_training_curves(loss_history, train_accuracy_history, val_accuracy_hist
     save_path = os.path.join(output_dir, "resnet_training_curves.png")
     plt.savefig(save_path)
     print(f"Saved training curves to {save_path}")
+
+def generate_advanced_report(net, testloader, device, classes, output_dir, top_k=5):
+    print("\n--- Generating Advanced Report ---")
+    net.eval()
+    all_labels = []
+    all_predicted = []
+    misclassified = []
+
+    with torch.no_grad():
+        for data in testloader:
+            images, labels = data
+            images, labels = images.to(device), labels.to(device)
+            outputs = net(images)
+            _, predicted = torch.max(outputs.data, 1)
+            all_labels.extend(labels.cpu().numpy())
+            all_predicted.extend(predicted.cpu().numpy())
+            
+            # Identify misclassified samples
+            for i in range(len(labels)):
+                if predicted[i] != labels[i]:
+                    misclassified.append((classes[labels[i]], classes[predicted[i]]))
+
+    # 1. Confusion Matrix
+    print("Generating confusion matrix...")
+    cm = confusion_matrix(all_labels, all_predicted)
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=classes, yticklabels=classes)
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.title('Confusion Matrix')
+    cm_save_path = os.path.join(output_dir, 'confusion_matrix.png')
+    plt.savefig(cm_save_path)
+    print(f"Saved confusion matrix to {cm_save_path}")
+
+    # 2. Top-K Error Classes
+    print(f"\n--- Top-{top_k} Misclassification Errors ---")
+    if misclassified:
+        error_counts = Counter(misclassified)
+        top_errors = error_counts.most_common(top_k)
+        for i, ((true_label, pred_label), count) in enumerate(top_errors):
+            print(f"{i+1}. True: '{true_label}', Predicted: '{pred_label}' - Occurrences: {count}")
+    else:
+        print("No misclassification errors found.")
+
+
 
 def visualize_and_save_predictions(net, testloader, classes, device, output_dir):
     print("Generating prediction images for the report...")
@@ -207,23 +296,27 @@ def adjust_learning_rate(optimizer, epoch, initial_lr, warmup_epochs, milestones
 # ======================================================================================
 def main(output_dir):
     # Hyperparameters
-    NUM_EPOCHS = 200
+    NUM_EPOCHS = 250
     BATCH_SIZE = 128
     INITIAL_LR = 0.1
     MOMENTUM = 0.9
     WEIGHT_DECAY = 5e-4
+    MIXUP_ALPHA = 1.0
+    CUTMIX_ALPHA = 1.0
 
     # LR Scheduler and Warmup settings
     WARMUP_EPOCHS = 5
-    LR_MILESTONES = [60, 120, 160]
+    LR_MILESTONES = [60, 120, 160,200]
     LR_GAMMA = 0.2  # Divide by 5
 
     # Data transformation
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
+        transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        transforms.RandomErasing(p=0.5),
     ])
     transform_test = transforms.Compose([
         transforms.ToTensor(),
@@ -258,10 +351,30 @@ def main(output_dir):
         net.train()
         running_loss = 0.0
         for data in trainloader:
-            inputs, labels = data; inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            # Randomly apply either Mixup or CutMix
+            if np.random.rand() < 0.5:
+                # Apply Mixup
+                mixed_inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, MIXUP_ALPHA, device)
+                outputs = net(mixed_inputs)
+                loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
+            else:
+                # Apply CutMix
+                lam = np.random.beta(CUTMIX_ALPHA, CUTMIX_ALPHA)
+                rand_index = torch.randperm(inputs.size()[0]).to(device)
+                labels_a = labels
+                labels_b = labels[rand_index]
+                bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
+                inputs[:, :, bby1:bby2, bbx1:bbx2] = inputs[rand_index, :, bby1:bby2, bbx1:bbx2]
+                # Adjust lambda to reflect the actual patch size
+                lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2]))
+                
+                outputs = net(inputs)
+                loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
+
             optimizer.zero_grad()
-            outputs = net(inputs)
-            loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -302,6 +415,8 @@ def main(output_dir):
 
     plot_training_curves(loss_history, train_accuracy_history, val_accuracy_history, output_dir)
     visualize_and_save_predictions(net, testloader, classes, device, output_dir)
+    generate_advanced_report(net, testloader, device, classes, output_dir)
+
 
 if __name__ == '__main__':
     # Create a directory for results
