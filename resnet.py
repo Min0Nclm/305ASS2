@@ -208,7 +208,7 @@ def adjust_learning_rate(optimizer, epoch, initial_lr, warmup_epochs, milestones
 # ======================================================================================
 def main(output_dir):
     # Hyperparameters
-    NUM_EPOCHS = 200
+    NUM_EPOCHS = 250
     BATCH_SIZE = 128
     INITIAL_LR = 0.1
     MOMENTUM = 0.9
@@ -216,7 +216,7 @@ def main(output_dir):
 
     # LR Scheduler and Warmup settings
     WARMUP_EPOCHS = 5
-    LR_MILESTONES = [60, 120, 160]
+    LR_MILESTONES = [60, 120, 160,200]
     LR_GAMMA = 0.2  # Divide by 5
 
     # Data transformation
