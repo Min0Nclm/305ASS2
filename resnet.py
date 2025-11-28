@@ -209,7 +209,7 @@ def main(output_dir):
     # Hyperparameters
     NUM_EPOCHS = 200
     BATCH_SIZE = 128
-    INITIAL_LR = 0.1
+    INITIAL_LR = 0.01
     MOMENTUM = 0.9
     WEIGHT_DECAY = 5e-4
 
